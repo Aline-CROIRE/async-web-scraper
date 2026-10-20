@@ -2,3 +2,4 @@ aiohttp
 aiofiles
 pytest
 pytest-asyncio
+pytest-aiohttppython -m pytest -v
