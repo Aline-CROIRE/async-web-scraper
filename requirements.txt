@@ -2,4 +2,7 @@ aiohttp
 aiofiles
 pytest
 pytest-asyncio
-pytest-aiohttppython -m pytest -v
+pytest-aiohttp
+black
+ruff
+coverage
