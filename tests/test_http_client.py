@@ -31,7 +31,11 @@ async def test_fetch_url_raises_for_http_error(aiohttp_server):
     server = await aiohttp_server(app)
 
     with pytest.raises(aiohttp.ClientResponseError):
-        await fetch_url(str(server.make_url("/")))
+        await fetch_url(
+            str(server.make_url("/")),
+            retries=1,
+            retry_delay=0,
+        )
 
 
 @pytest.mark.asyncio
@@ -43,7 +47,11 @@ async def test_fetch_url_safely_returns_none_for_http_error(aiohttp_server):
     app.router.add_get("/", handler)
     server = await aiohttp_server(app)
 
-    result = await fetch_url_safely(str(server.make_url("/")))
+    result = await fetch_url_safely(
+        str(server.make_url("/")),
+        retries=1,
+        retry_delay=0,
+    )
 
     assert result is None
 
@@ -79,10 +87,8 @@ async def test_fetch_urls_keeps_successful_results_when_one_url_fails(
 ):
     async def handler(request):
         page = request.match_info["page"]
-
         if page == "failure":
             raise web.HTTPInternalServerError()
-
         return web.Response(text=f"Content for {page}")
 
     app = web.Application()
@@ -120,3 +126,66 @@ async def test_fetch_url_safely_returns_none_on_timeout(aiohttp_server):
     )
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_retries_temporary_server_error(aiohttp_server):
+    attempts = 0
+
+    async def handler(request):
+        nonlocal attempts
+        attempts += 1
+
+        if attempts < 3:
+            raise web.HTTPServiceUnavailable()
+
+        return web.Response(text="Recovered")
+
+    app = web.Application()
+    app.router.add_get("/", handler)
+    server = await aiohttp_server(app)
+
+    result = await fetch_url(
+        str(server.make_url("/")),
+        retries=3,
+        retry_delay=0,
+    )
+
+    assert result == "Recovered"
+    assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_does_not_retry_not_found(aiohttp_server):
+    attempts = 0
+
+    async def handler(request):
+        nonlocal attempts
+        attempts += 1
+        raise web.HTTPNotFound()
+
+    app = web.Application()
+    app.router.add_get("/", handler)
+    server = await aiohttp_server(app)
+
+    with pytest.raises(aiohttp.ClientResponseError) as error:
+        await fetch_url(
+            str(server.make_url("/")),
+            retries=3,
+            retry_delay=0,
+        )
+
+    assert error.value.status == 404
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_rejects_invalid_retries():
+    with pytest.raises(ValueError, match="retries must be at least 1"):
+        await fetch_url("https://example.com", retries=0)
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_rejects_negative_retry_delay():
+    with pytest.raises(ValueError, match="retry_delay cannot be negative"):
+        await fetch_url("https://example.com", retry_delay=-0.1)
