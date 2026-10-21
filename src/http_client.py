@@ -81,5 +81,20 @@ async def fetch_urls(
     retry_delay: float = 1.0,
 ) -> list[str | None]:
     """Fetch multiple URLs concurrently, preserving their input order."""
-    tasks = [fetch_url_safely(url, timeout, retries, retry_delay) for url in urls]
-    return await asyncio.gather(*tasks)
+    tasks = [
+        asyncio.create_task(
+            fetch_url_safely(url, timeout, retries, retry_delay),
+            name=f"fetch-url-{index}",
+        )
+        for index, url in enumerate(urls, start=1)
+    ]
+
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
