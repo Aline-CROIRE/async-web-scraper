@@ -1,4 +1,3 @@
-
 import pytest
 
 from src.async_basics import say_hello
