@@ -87,8 +87,10 @@ async def test_fetch_urls_keeps_successful_results_when_one_url_fails(
 ):
     async def handler(request):
         page = request.match_info["page"]
+
         if page == "failure":
             raise web.HTTPInternalServerError()
+
         return web.Response(text=f"Content for {page}")
 
     app = web.Application()
@@ -189,3 +191,83 @@ async def test_fetch_url_rejects_invalid_retries():
 async def test_fetch_url_rejects_negative_retry_delay():
     with pytest.raises(ValueError, match="retry_delay cannot be negative"):
         await fetch_url("https://example.com", retry_delay=-0.1)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_creates_named_tasks(aiohttp_server, monkeypatch):
+    created_tasks = []
+    original_create_task = asyncio.create_task
+
+    async def handler(request):
+        return web.Response(text=request.match_info["page"])
+
+    app = web.Application()
+    app.router.add_get("/{page}", handler)
+    server = await aiohttp_server(app)
+
+    def tracking_create_task(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+
+        if task.get_name().startswith("fetch-url-"):
+            created_tasks.append(task)
+
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", tracking_create_task)
+
+    urls = [
+        str(server.make_url("/first")),
+        str(server.make_url("/second")),
+    ]
+
+    results = await fetch_urls(urls)
+
+    assert results == ["first", "second"]
+    assert [task.get_name() for task in created_tasks] == [
+        "fetch-url-1",
+        "fetch-url-2",
+    ]
+    assert all(task.done() for task in created_tasks)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_returns_empty_list_for_no_urls():
+    results = await fetch_urls([])
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_cancels_child_tasks_when_cancelled(monkeypatch):
+    started = asyncio.Event()
+    child_tasks = []
+
+    async def blocked_fetch(
+        url,
+        timeout=10,
+        retries=3,
+        retry_delay=1.0,
+    ):
+        child_tasks.append(asyncio.current_task())
+
+        if len(child_tasks) == 2:
+            started.set()
+
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "src.http_client.fetch_url_safely",
+        blocked_fetch,
+    )
+
+    parent_task = asyncio.create_task(fetch_urls(["first", "second"]))
+
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    parent_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await parent_task
+
+    assert len(child_tasks) == 2
+    assert all(task.cancelled() for task in child_tasks)
