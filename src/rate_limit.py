@@ -22,6 +22,14 @@ def rate_limit(
     def decorator(
         function: Callable[P, Awaitable[R]],
     ) -> Callable[P, Awaitable[R]]:
+        if min_interval == 0:
+
+            @wraps(function)
+            async def unthrottled_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+                return await function(*args, **kwargs)
+
+            return unthrottled_wrapper
+
         lock = asyncio.Lock()
         last_call_time: float | None = None
 
