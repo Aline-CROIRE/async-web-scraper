@@ -45,10 +45,11 @@ def retry(
                         raise
 
                     if attempt == max_attempts:
-                        logger.exception(
-                            "Function %s failed after %d attempts",
+                        logger.error(
+                            "Function %s failed after %d attempts (%s)",
                             function.__name__,
                             attempt,
+                            type(error).__name__,
                         )
                         raise
 

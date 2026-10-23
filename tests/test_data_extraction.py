@@ -21,6 +21,10 @@ def test_extract_title_handles_whitespace_and_multiple_lines():
     assert extract_title(html) == "My Example Page"
 
 
+def test_extract_title_decodes_html_entities():
+    assert extract_title("<title>Fish &amp; Chips</title>") == "Fish & Chips"
+
+
 def test_extract_title_returns_none_when_missing():
     html = "<html><body><p>No title here</p></body></html>"
 

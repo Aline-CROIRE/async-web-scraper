@@ -4,7 +4,8 @@ A Python project demonstrating asynchronous web scraping, concurrent HTTP reques
 
 ## Features
 
-- Fetch multiple URLs concurrently using `asyncio` and `aiohttp`.
+- Fetch multiple URLs concurrently using `asyncio` and `aiohttp`, reusing a
+  connection pool and limiting active requests to avoid unbounded task growth.
 - Manage concurrent operations with `asyncio.gather()` and `asyncio.create_task()`.
 - Apply timeouts and retry temporary request failures.
 - Handle HTTP errors and failed requests without losing successful results.
@@ -49,6 +50,13 @@ The program fetches the configured URLs concurrently, extracts each page's title
 `output/scraped_results.json`
 
 The default URLs are configured in `src/run_scraper.py`. Edit the `URLS` list to scrape other pages.
+Batch fetching defaults to at most 10 concurrent requests. Pass
+`max_concurrency` to `scrape_urls()` to change this limit, or set
+`min_request_interval` in seconds to pace HTTP attempts, including retries.
+The interval defaults to `0` to preserve the existing request timing. A single
+rate limiter is shared by all attempts in one `fetch_urls()` batch; separate
+or overlapping batch calls have independent limits and do not share a
+process-wide limiter.
 
 Each result contains:
 

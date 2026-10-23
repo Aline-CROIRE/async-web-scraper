@@ -1,5 +1,6 @@
-﻿import re
+import re
 from collections.abc import Iterable
+from html import unescape
 
 TITLE_PATTERN = re.compile(
     r"<title\b[^>]*>(.*?)</title\s*>",
@@ -19,7 +20,7 @@ def extract_title(html: str) -> str | None:
     if match is None:
         return None
 
-    title = re.sub(r"\s+", " ", match.group(1)).strip()
+    title = re.sub(r"\s+", " ", unescape(match.group(1))).strip()
     return title or None
 
 
