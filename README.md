@@ -1,165 +1,226 @@
 # Async Web Scraper
 
-A Python project demonstrating asynchronous web scraping, concurrent HTTP requests, error handling, data extraction, asynchronous file I/O, and performance benchmarking.
+An asynchronous web scraping application built with Python. It fetches web pages concurrently, extracts page titles and email addresses, handles request failures, and saves structured results as JSON.
 
 ## Features
 
-- Fetch multiple URLs concurrently using `asyncio` and `aiohttp`, reusing a
-  connection pool and limiting active requests to avoid unbounded task growth.
-- Manage concurrent operations with `asyncio.gather()` and `asyncio.create_task()`.
-- Apply timeouts and retry temporary request failures.
-- Handle HTTP errors and failed requests without losing successful results.
-- Use an asynchronous generator with `async for` to yield fetched page results.
-- Apply retry and rate-limit decorators.
-- Extract HTML page titles and email addresses using regular expressions.
-- Transform email data using `map()` and `filter()`, normalize addresses, and remove duplicates.
-- Save scraping and benchmark results as JSON using asynchronous file I/O.
-- Compare sequential, threaded, and asynchronous fetching performance.
-- Test functionality with `pytest` and check code quality with Black and Ruff.
+- **Asynchronous HTTP requests:** Fetch multiple web pages without waiting for each network request to finish before starting another.
+- **HTML data extraction:** Extract page titles and email addresses from fetched HTML.
+- **Email normalization:** Normalize extracted email addresses and remove duplicates.
+- **Bounded concurrency:** Limit the number of requests running concurrently.
+- **Timeout handling:** Prevent requests from waiting indefinitely.
+- **Retry handling:** Retry eligible temporary failures.
+- **Rate limiting:** Control the pace of requests.
+- **Error handling:** Record failed requests while allowing other URLs to be processed.
+- **JSON output:** Save scraping results to a JSON file.
+- **Interactive CLI:** Enter URLs, configure concurrency, view results, and inspect previously saved output.
+- **Automated testing:** Validate functionality and error handling with pytest.
 
-## Requirements
-
-- Python 3.11 or newer
-- The dependencies listed in `requirements.txt`
-
-## Setup
-
-Create and activate a virtual environment:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Install dependencies:
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-## Run the scraper
-
-Run the integrated scraping workflow:
-
-```powershell
-python -m src.run_scraper
-```
-
-The program fetches the configured URLs concurrently, extracts each page's title and email addresses, and saves the results to:
-
-`output/scraped_results.json`
-
-The default URLs are configured in `src/run_scraper.py`. Edit the `URLS` list to scrape other pages.
-Batch fetching defaults to at most 10 concurrent requests. Pass
-`max_concurrency` to `scrape_urls()` to change this limit, or set
-`min_request_interval` in seconds to pace HTTP attempts, including retries.
-The interval defaults to `0` to preserve the existing request timing. A single
-rate limiter is shared by all attempts in one `fetch_urls()` batch; separate
-or overlapping batch calls have independent limits and do not share a
-process-wide limiter.
-
-Each result contains:
-
-- `url`: the page URL
-- `success`: whether fetching succeeded
-- `title`: the extracted page title, or `null` if none was found
-- `emails`: normalized, unique email addresses found on the page
-
-Failed requests are recorded with `success` set to `false`, a `null` title, and an empty email list.
-
-## Run the performance benchmark
-
-Run:
-
-```powershell
-python -m src.run_benchmark
-```
-
-The benchmark compares three approaches using the same URLs:
-
-1. **Sequential:** fetches URLs one after another using blocking standard-library HTTP.
-2. **Threaded:** fetches URLs concurrently using `ThreadPoolExecutor`.
-3. **Async:** fetches URLs concurrently using `asyncio` and `aiohttp`.
-
-Benchmark results are saved to:
-
-`output/benchmark_results.json`
-
-### Example benchmark results
-
-One successful run with three URLs produced these measurements:
-
-| Method | Elapsed time | Successful requests |
-| --- | ---: | ---: |
-| Sequential | 1.805503 seconds | 3/3 |
-| Threaded | 0.706765 seconds | 3/3 |
-| Async | 0.709232 seconds | 3/3 |
-
-In this run, both concurrent approaches completed faster than sequential fetching. Threaded fetching was approximately 2.55 times as fast as sequential fetching, and asynchronous fetching was approximately 2.54 times as fast.
-
-These are sample measurements, not guaranteed results. Network conditions, server response times, and other environmental factors can change benchmark timings.
-
-## Sample JSON output
-
-A successful scraping result has this structure:
-
-```json
-[
-    {
-        "url": "https://example.com/",
-        "success": true,
-        "title": "Example Domain",
-        "emails": []
-    }
-]
-```
-
-Actual output depends on the content returned by each website.
-
-## Project structure
+## Project Structure
 
 ```text
 async-web-scraper/
 ├── src/
+│   ├── __init__.py
 │   ├── async_basics.py
 │   ├── async_generators.py
-│   ├── benchmark.py
 │   ├── data_extraction.py
+│   ├── demo_cli.py
 │   ├── http_client.py
 │   ├── json_writer.py
 │   ├── rate_limit.py
 │   ├── retry.py
 │   ├── run_benchmark.py
-│   ├── run_scraper.py
-│   └── scraper.py
+│   └── run_scraper.py
 ├── tests/
+│   ├── test_async_basics.py
+│   ├── test_async_generators.py
+│   ├── test_benchmark.py
+│   ├── test_data_extraction.py
+│   ├── test_http_client.py
+│   ├── test_json_writer.py
+│   ├── test_rate_limit.py
+│   ├── test_retry.py
+│   └── test_scraper.py
 ├── output/
+│   └── scraped_results.json
 ├── requirements.txt
 └── README.md
 ```
 
-## Testing
 
-Run the complete test suite:
+## Requirements
+
+- Python 3.11 or newer, compatible with the project's dependencies
+- pip
+- Git (for cloning and version control)
+
+## Installation
+
+### 1. Clone the repository
+
+```powershell
+git clone https://github.com/Aline-CROIRE/async-web-scraper.git
+cd async-web-scraper
+```
+
+### 2. Create a virtual environment
+
+On Windows PowerShell:
+
+```powershell
+python -m venv .venv
+```
+
+### 3. Activate the virtual environment
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation, follow your organization's approved setup instructions or activate the environment using another supported method.
+
+### 4. Install dependencies
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+## Usage
+
+There are two ways to run the scraper.
+
+### 1. Run the default scraper
+
+```powershell
+python -m src.run_scraper
+```
+
+This runs the configured default URLs, extracts page titles and email addresses, displays a summary, and saves the results to:
+
+```text
+output/scraped_results.json
+```
+
+To change the default websites, edit the `URLS` list in `src/run_scraper.py`.
+
+### 2. Run the interactive CLI
+
+```powershell
+python -m src.demo_cli
+```
+
+The interactive menu provides three options:
+
+1. **Scrape websites:** Enter URLs or use the default demo websites.
+2. **View previous results:** Display the JSON results saved by the most recent run.
+3. **Exit:** Close the application.
+
+When scraping websites, enter full HTTP or HTTPS URLs separated by commas. For example:
+
+```text
+https://example.com/, https://www.python.org/
+```
+
+Then select the maximum number of concurrent requests, from 1 to 10. Press Enter to use the default value of 5.
+
+The interactive CLI uses the same scraping implementation as the default runner. This keeps the user interface separate from the core scraping logic.
+
+## Output
+
+Scraping results are saved to:
+
+```text
+output/scraped_results.json
+```
+
+Each result contains information such as the URL, whether the request succeeded, the extracted page title, and the list of email addresses found.
+
+A simplified example of one result is:
+
+```json
+{
+  "url": "https://example.com/",
+  "success": true,
+  "title": "Example Domain",
+  "emails": []
+}
+```
+
+This example illustrates the general result structure; the exact fields and values depend on the implementation and the website being scraped.
+
+## Run the Tests
+
+Run all automated tests:
 
 ```powershell
 python -m pytest -v
 ```
 
-Run formatting and lint checks:
+Run the test suite with coverage:
 
 ```powershell
-python -m black --check src tests
-python -m ruff check src tests
-```
-
-Measure test coverage, including branches:
-
-```powershell
-python -m coverage run --branch -m pytest
+python -m coverage run -m pytest
 python -m coverage report -m
 ```
 
-## Demonstration
+Check code quality with Ruff:
 
-For the lab demonstration, show concurrent fetching, error handling, extracted page data, the generated JSON output, and the benchmark comparison.
+```powershell
+python -m ruff check src tests
+```
+
+Check formatting with Black:
+
+```powershell
+python -m black --check src tests
+```
+
+## Benchmark
+
+Run the benchmark module to compare the implemented approaches:
+
+```powershell
+python -m src.run_benchmark
+```
+
+Review the benchmark output to understand how different approaches perform. Actual timings depend on network conditions, server response times, and the test URLs.
+
+## How It Works
+
+1. The runner or interactive CLI obtains the URLs to scrape.
+2. The scraper coordinates the scraping workflow.
+3. The HTTP client fetches the pages asynchronously, applying the configured request controls.
+4. The extraction module parses the returned HTML and extracts titles and email addresses.
+5. The scraper collects successful and failed results.
+6. The JSON writer saves the results to the output file.
+7. The runner displays a summary of the scraping process.
+
+## Key Python Concepts
+
+This project demonstrates:
+
+- `async` and `await` for asynchronous programming.
+- `asyncio` for coordinating concurrent tasks.
+- Asynchronous HTTP requests with `aiohttp`.
+- Exception handling and timeouts.
+- Retry strategies and rate limiting.
+- HTML parsing and regular expressions.
+- JSON serialization and file handling.
+- Separation of concerns and modular design.
+- Automated testing with pytest.
+- Code quality and formatting with Ruff and Black.
+- Git branching, commits, and collaborative development workflows.
+
+## Responsible Scraping
+
+- Scrape only websites you are permitted to access.
+- Review a website's Terms of Service and `robots.txt` guidance before scraping.
+- Respect rate limits and avoid sending excessive requests.
+- Do not attempt to bypass authentication, access controls, or anti-bot protections.
+- Avoid collecting or publishing personal or sensitive information.
+- A successful HTTP response does not guarantee that a page contains extractable titles or email addresses.
+
+## License
+
+Add a license file if you intend to distribute this project under an open-source license. Until then, no particular open-source license is implied.

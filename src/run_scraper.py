@@ -25,7 +25,8 @@ async def main() -> None:
     print("================")
 
     for result in results:
-        print(f"{result['url']}: " f"{'success' if result['success'] else 'failed'}")
+        status = "success" if result["success"] else "failed"
+        print(f"{result['url']}: {status}")
         print(f"  Title: {result['title']}")
         print(f"  Emails found: {len(result['emails'])}")
 
