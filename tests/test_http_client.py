@@ -1,9 +1,11 @@
 import asyncio
+import ssl
 from itertools import pairwise
 
 import aiohttp
 import pytest
 from aiohttp import web
+from aiohttp.client_reqrep import ConnectionKey
 
 from src.http_client import (
     _read_response,
@@ -586,3 +588,64 @@ async def test_fetch_urls_cancels_child_tasks_when_cancelled(monkeypatch):
     assert all(task.cancelled() for task in child_tasks)
     assert len({id(session) for session in sessions}) == 1
     assert sessions[0].closed
+
+
+def make_certificate_error():
+    """Build the error aiohttp raises when a TLS certificate cannot be verified."""
+    connection_key = ConnectionKey(
+        "untrusted.example", 443, True, True, None, None, None, None
+    )
+    return aiohttp.ClientConnectorCertificateError(
+        connection_key,
+        ssl.SSLCertVerificationError("certificate verify failed"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_does_not_retry_certificate_errors(monkeypatch):
+    attempts = 0
+
+    async def untrusted_fetch(url, timeout, session):
+        nonlocal attempts
+        attempts += 1
+        raise make_certificate_error()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", untrusted_fetch)
+
+    with pytest.raises(aiohttp.ClientConnectorCertificateError):
+        await fetch_url("https://untrusted.example/", retries=3, retry_delay=0)
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_still_retries_other_connection_errors(monkeypatch):
+    attempts = 0
+
+    async def flaky_fetch(url, timeout, session):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise aiohttp.ClientConnectionError("connection reset")
+        return "Recovered"
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", flaky_fetch)
+
+    result = await fetch_url("https://flaky.example/", retries=3, retry_delay=0)
+
+    assert result == "Recovered"
+    assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_safely_reports_certificate_error(monkeypatch, caplog):
+    async def untrusted_fetch(url, timeout, session):
+        raise make_certificate_error()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", untrusted_fetch)
+
+    result = await fetch_url_safely("https://untrusted.example/", retry_delay=0)
+
+    assert result is None
+    assert "ClientConnectorCertificateError" in caplog.text
+    assert "failed on attempt" not in caplog.text
