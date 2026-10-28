@@ -28,6 +28,59 @@ async def test_fetch_url_returns_response_body(aiohttp_server):
 
 
 @pytest.mark.asyncio
+async def test_fetch_url_replaces_invalid_utf8_bytes(aiohttp_server):
+    async def handler(request):
+        return web.Response(
+            body=b"<title>Caf\xe9 Menu</title>",
+            content_type="text/html",
+            charset="utf-8",
+        )
+
+    app = web.Application()
+    app.router.add_get("/", handler)
+    server = await aiohttp_server(app)
+
+    result = await fetch_url(str(server.make_url("/")), retries=1)
+
+    assert result == "<title>Caf� Menu</title>"
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_keeps_batch_when_one_page_has_invalid_utf8(
+    aiohttp_server,
+):
+    async def handler(request):
+        page = request.match_info["page"]
+
+        if page == "malformed":
+            return web.Response(
+                body=b"<title>Bad \xff\xfe bytes</title>",
+                content_type="text/html",
+                charset="utf-8",
+            )
+
+        return web.Response(text=f"Content for {page}")
+
+    app = web.Application()
+    app.router.add_get("/{page}", handler)
+    server = await aiohttp_server(app)
+
+    urls = [
+        str(server.make_url("/first")),
+        str(server.make_url("/malformed")),
+        str(server.make_url("/third")),
+    ]
+
+    results = await fetch_urls(urls, retries=1)
+
+    assert results == [
+        "Content for first",
+        "<title>Bad �� bytes</title>",
+        "Content for third",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_fetch_url_raises_for_http_error(aiohttp_server):
     async def handler(request):
         raise web.HTTPInternalServerError()
