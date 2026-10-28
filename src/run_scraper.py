@@ -1,4 +1,5 @@
 ﻿import asyncio
+import sys
 from pathlib import Path
 
 from src.async_generators import PageResult
@@ -11,6 +12,8 @@ URLS = [
     "https://www.python.org/",
 ]
 
+OUTPUT_PATH = Path("output") / "scraped_results.json"
+
 
 def show_progress(result: PageResult) -> None:
     """Print each page as soon as it has been scraped."""
@@ -18,14 +21,10 @@ def show_progress(result: PageResult) -> None:
     print(f"  {status}: {result['url']}")
 
 
-async def main() -> None:
-    """Run the scraper and save extracted results."""
+async def main() -> int:
+    """Run the scraper, show the results and save them; return an exit code."""
     print(f"Scraping {len(URLS)} pages (results appear as they finish)...")
     results = await scrape_urls(URLS, on_result=show_progress)
-
-    output_path = Path("output") / "scraped_results.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    await write_json(output_path, results)
 
     successful = sum(result["success"] for result in results)
 
@@ -39,8 +38,16 @@ async def main() -> None:
         print(f"  Emails found: {len(result['emails'])}")
 
     print(f"\nSuccessful pages: {successful}/{len(URLS)}")
-    print(f"JSON saved to: {output_path}")
+
+    try:
+        saved_path = await write_json(OUTPUT_PATH, results)
+    except OSError as error:
+        print(f"Could not save results to {OUTPUT_PATH}: {error}", file=sys.stderr)
+        return 1
+
+    print(f"JSON saved to: {saved_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
