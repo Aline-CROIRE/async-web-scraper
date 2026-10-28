@@ -14,7 +14,13 @@ RESULTS = [
 ]
 
 BENCHMARK_RESULTS = {
-    method: {"elapsed_seconds": 0.1, "successful_requests": 3}
+    method: {
+        "elapsed_seconds": 0.1,
+        "min_seconds": 0.1,
+        "max_seconds": 0.1,
+        "successful_requests": 3,
+        "runs": [{"elapsed_seconds": 0.1, "successful_requests": 3}],
+    }
     for method in ("sequential", "threaded", "async")
 }
 
@@ -23,7 +29,7 @@ async def fake_scrape_urls(urls, **kwargs):
     return RESULTS
 
 
-async def fake_benchmark_fetching(urls):
+async def fake_benchmark_fetching(urls, **kwargs):
     return BENCHMARK_RESULTS
 
 
@@ -74,9 +80,12 @@ async def test_run_benchmark_saves_results_and_succeeds(
     monkeypatch.setattr(run_benchmark, "benchmark_fetching", fake_benchmark_fetching)
     monkeypatch.setattr(run_benchmark, "OUTPUT_PATH", output_path)
 
-    assert await run_benchmark.main() == 0
+    assert await run_benchmark.main([]) == 0
 
-    assert json.loads(output_path.read_text(encoding="utf-8")) == BENCHMARK_RESULTS
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert saved["results"] == BENCHMARK_RESULTS
+    assert saved["conditions"]["mode"] == "local"
+    assert saved["conditions"]["url_count"] == 25
     assert "Results saved to:" in capsys.readouterr().out
 
 
@@ -89,7 +98,7 @@ async def test_run_benchmark_reports_save_failure_after_showing_results(
     monkeypatch.setattr(run_benchmark, "benchmark_fetching", fake_benchmark_fetching)
     monkeypatch.setattr(run_benchmark, "OUTPUT_PATH", unwritable_path)
 
-    assert await run_benchmark.main() == 1
+    assert await run_benchmark.main([]) == 1
 
     captured = capsys.readouterr()
     assert "sequential" in captured.out
