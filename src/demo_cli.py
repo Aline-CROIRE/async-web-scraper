@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from src.async_generators import PageResult
 from src.json_writer import write_json
 from src.scraper import scrape_urls
 
@@ -98,7 +99,12 @@ def display_results(results: list[dict]) -> None:
 
     print("\n" + "=" * 42)
     print(f"Completed: {successful}/{len(results)} websites successful")
-    print(f"JSON saved to: {OUTPUT_PATH}")
+
+
+def show_progress(result: PageResult) -> None:
+    """Print each website as soon as it has been scraped."""
+    status = "done" if result["success"] else "failed"
+    print(f"  {status}: {result['url']}")
 
 
 async def scrape_interactively() -> None:
@@ -117,11 +123,18 @@ async def scrape_interactively() -> None:
     results = await scrape_urls(
         urls,
         max_concurrency=concurrency,
+        on_result=show_progress,
     )
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    await write_json(OUTPUT_PATH, results)
     display_results(results)
+
+    try:
+        saved_path = await write_json(OUTPUT_PATH, results)
+    except OSError as error:
+        print(f"Could not save results to {OUTPUT_PATH}: {error}")
+        return
+
+    print(f"JSON saved to: {saved_path}")
 
 
 def view_saved_results() -> None:

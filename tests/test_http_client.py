@@ -1,15 +1,18 @@
 import asyncio
+import ssl
 from itertools import pairwise
 
 import aiohttp
 import pytest
 from aiohttp import web
+from aiohttp.client_reqrep import ConnectionKey
 
 from src.http_client import (
     _read_response,
     fetch_url,
     fetch_url_safely,
     fetch_urls,
+    iter_fetch_results,
 )
 
 
@@ -25,6 +28,59 @@ async def test_fetch_url_returns_response_body(aiohttp_server):
     result = await fetch_url(str(server.make_url("/")))
 
     assert result == "Hello from the test server!"
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_replaces_invalid_utf8_bytes(aiohttp_server):
+    async def handler(request):
+        return web.Response(
+            body=b"<title>Caf\xe9 Menu</title>",
+            content_type="text/html",
+            charset="utf-8",
+        )
+
+    app = web.Application()
+    app.router.add_get("/", handler)
+    server = await aiohttp_server(app)
+
+    result = await fetch_url(str(server.make_url("/")), retries=1)
+
+    assert result == "<title>Caf� Menu</title>"
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_keeps_batch_when_one_page_has_invalid_utf8(
+    aiohttp_server,
+):
+    async def handler(request):
+        page = request.match_info["page"]
+
+        if page == "malformed":
+            return web.Response(
+                body=b"<title>Bad \xff\xfe bytes</title>",
+                content_type="text/html",
+                charset="utf-8",
+            )
+
+        return web.Response(text=f"Content for {page}")
+
+    app = web.Application()
+    app.router.add_get("/{page}", handler)
+    server = await aiohttp_server(app)
+
+    urls = [
+        str(server.make_url("/first")),
+        str(server.make_url("/malformed")),
+        str(server.make_url("/third")),
+    ]
+
+    results = await fetch_urls(urls, retries=1)
+
+    assert results == [
+        "Content for first",
+        "<title>Bad �� bytes</title>",
+        "Content for third",
+    ]
 
 
 @pytest.mark.asyncio
@@ -452,6 +508,52 @@ async def test_fetch_urls_returns_empty_list_for_no_urls():
 
 
 @pytest.mark.asyncio
+async def test_iter_fetch_results_yields_in_completion_order(aiohttp_server):
+    async def handler(request):
+        delay = request.match_info["delay"]
+        await asyncio.sleep(float(delay))
+        return web.Response(text=delay)
+
+    app = web.Application()
+    app.router.add_get("/{delay}", handler)
+    server = await aiohttp_server(app)
+    urls = [str(server.make_url(f"/{delay}")) for delay in ("0.2", "0.1", "0")]
+
+    results = [result async for result in iter_fetch_results(urls)]
+
+    assert [result.index for result in results] == [2, 1, 0]
+    assert [result.html for result in results] == ["0", "0.1", "0.2"]
+    assert all(result.url == urls[result.index] for result in results)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_raises_unexpected_worker_error_and_cleans_up(
+    monkeypatch,
+):
+    blocked_tasks = []
+    sessions = []
+
+    async def broken_fetch(url, timeout, session):
+        sessions.append(session)
+        if url == "broken":
+            raise RuntimeError("unexpected bug")
+        blocked_tasks.append(asyncio.current_task())
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", broken_fetch)
+
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        await asyncio.wait_for(
+            fetch_urls(["blocked", "broken", "blocked-too"], max_concurrency=3),
+            timeout=1,
+        )
+
+    assert len(blocked_tasks) == 2
+    assert all(task.cancelled() for task in blocked_tasks)
+    assert sessions[0].closed
+
+
+@pytest.mark.asyncio
 async def test_fetch_urls_cancels_child_tasks_when_cancelled(monkeypatch):
     started = asyncio.Event()
     child_tasks = []
@@ -486,3 +588,64 @@ async def test_fetch_urls_cancels_child_tasks_when_cancelled(monkeypatch):
     assert all(task.cancelled() for task in child_tasks)
     assert len({id(session) for session in sessions}) == 1
     assert sessions[0].closed
+
+
+def make_certificate_error():
+    """Build the error aiohttp raises when a TLS certificate cannot be verified."""
+    connection_key = ConnectionKey(
+        "untrusted.example", 443, True, True, None, None, None, None
+    )
+    return aiohttp.ClientConnectorCertificateError(
+        connection_key,
+        ssl.SSLCertVerificationError("certificate verify failed"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_does_not_retry_certificate_errors(monkeypatch):
+    attempts = 0
+
+    async def untrusted_fetch(url, timeout, session):
+        nonlocal attempts
+        attempts += 1
+        raise make_certificate_error()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", untrusted_fetch)
+
+    with pytest.raises(aiohttp.ClientConnectorCertificateError):
+        await fetch_url("https://untrusted.example/", retries=3, retry_delay=0)
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_still_retries_other_connection_errors(monkeypatch):
+    attempts = 0
+
+    async def flaky_fetch(url, timeout, session):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise aiohttp.ClientConnectionError("connection reset")
+        return "Recovered"
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", flaky_fetch)
+
+    result = await fetch_url("https://flaky.example/", retries=3, retry_delay=0)
+
+    assert result == "Recovered"
+    assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_safely_reports_certificate_error(monkeypatch, caplog):
+    async def untrusted_fetch(url, timeout, session):
+        raise make_certificate_error()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", untrusted_fetch)
+
+    result = await fetch_url_safely("https://untrusted.example/", retry_delay=0)
+
+    assert result is None
+    assert "ClientConnectorCertificateError" in caplog.text
+    assert "failed on attempt" not in caplog.text

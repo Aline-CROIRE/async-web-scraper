@@ -1,5 +1,7 @@
-﻿from src.data_extraction import extract_emails, extract_title, transform_emails
-from src.http_client import fetch_urls
+﻿from collections.abc import Callable
+from contextlib import aclosing
+
+from src.async_generators import PageResult, iter_page_results
 
 
 async def scrape_urls(
@@ -9,40 +11,29 @@ async def scrape_urls(
     retry_delay: float = 1.0,
     max_concurrency: int = 10,
     min_request_interval: float = 0.0,
-) -> list[dict[str, str | bool | list[str] | None]]:
-    """Fetch URLs concurrently and extract useful information from each page."""
-    html_pages = await fetch_urls(
-        urls,
-        timeout=timeout,
-        retries=retries,
-        retry_delay=retry_delay,
-        max_concurrency=max_concurrency,
-        min_request_interval=min_request_interval,
-    )
+    on_result: Callable[[PageResult], None] | None = None,
+) -> list[PageResult]:
+    """Fetch URLs concurrently and extract useful information from each page.
 
-    results: list[dict[str, str | bool | list[str] | None]] = []
+    Results are consumed from an async generator as each page finishes;
+    ``on_result`` (for example, a progress printer) is called in that
+    completion order. The returned list is in the same order as ``urls``.
+    """
+    results: dict[int, PageResult] = {}
 
-    for url, html in zip(urls, html_pages, strict=True):
-        if html is None:
-            results.append(
-                {
-                    "url": url,
-                    "success": False,
-                    "title": None,
-                    "emails": [],
-                }
-            )
-            continue
-
-        emails = transform_emails(extract_emails(html))
-
-        results.append(
-            {
-                "url": url,
-                "success": True,
-                "title": extract_title(html),
-                "emails": emails,
-            }
+    async with aclosing(
+        iter_page_results(
+            urls,
+            timeout=timeout,
+            retries=retries,
+            retry_delay=retry_delay,
+            max_concurrency=max_concurrency,
+            min_request_interval=min_request_interval,
         )
+    ) as page_results:
+        async for index, result in page_results:
+            results[index] = result
+            if on_result is not None:
+                on_result(result)
 
-    return results
+    return [results[index] for index in range(len(urls))]
