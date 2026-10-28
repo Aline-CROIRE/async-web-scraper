@@ -74,7 +74,9 @@ async def _read_response(session: aiohttp.ClientSession, url: str) -> str:
         timeout=aiohttp.ClientTimeout(total=None),
     ) as response:
         response.raise_for_status()
-        return await response.text()
+        # Real pages often contain bytes that do not match their declared
+        # charset; replace them so one malformed page cannot fail a batch.
+        return await response.text(errors="replace")
 
 
 async def _fetch_url_once(
