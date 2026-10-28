@@ -10,6 +10,7 @@ from src.http_client import (
     fetch_url,
     fetch_url_safely,
     fetch_urls,
+    iter_fetch_results,
 )
 
 
@@ -502,6 +503,52 @@ async def test_fetch_urls_returns_empty_list_for_no_urls():
     results = await fetch_urls([])
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_iter_fetch_results_yields_in_completion_order(aiohttp_server):
+    async def handler(request):
+        delay = request.match_info["delay"]
+        await asyncio.sleep(float(delay))
+        return web.Response(text=delay)
+
+    app = web.Application()
+    app.router.add_get("/{delay}", handler)
+    server = await aiohttp_server(app)
+    urls = [str(server.make_url(f"/{delay}")) for delay in ("0.2", "0.1", "0")]
+
+    results = [result async for result in iter_fetch_results(urls)]
+
+    assert [result.index for result in results] == [2, 1, 0]
+    assert [result.html for result in results] == ["0", "0.1", "0.2"]
+    assert all(result.url == urls[result.index] for result in results)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_raises_unexpected_worker_error_and_cleans_up(
+    monkeypatch,
+):
+    blocked_tasks = []
+    sessions = []
+
+    async def broken_fetch(url, timeout, session):
+        sessions.append(session)
+        if url == "broken":
+            raise RuntimeError("unexpected bug")
+        blocked_tasks.append(asyncio.current_task())
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.http_client._fetch_url_once", broken_fetch)
+
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        await asyncio.wait_for(
+            fetch_urls(["blocked", "broken", "blocked-too"], max_concurrency=3),
+            timeout=1,
+        )
+
+    assert len(blocked_tasks) == 2
+    assert all(task.cancelled() for task in blocked_tasks)
+    assert sessions[0].closed
 
 
 @pytest.mark.asyncio
