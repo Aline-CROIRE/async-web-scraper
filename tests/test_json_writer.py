@@ -36,7 +36,7 @@ async def test_write_json_preserves_unicode(tmp_path):
 async def test_write_json_rejects_non_serializable_data(tmp_path):
     output_file = tmp_path / "results.json"
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="not JSON serializable"):
         await write_json(output_file, {"invalid": object()})
 
 
@@ -98,7 +98,7 @@ async def test_non_serializable_data_does_not_touch_existing_file(tmp_path):
     output_file = tmp_path / "results.json"
     await write_json(output_file, {"version": "previous"})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="not JSON serializable"):
         await write_json(output_file, {"invalid": object()})
 
     assert json.loads(output_file.read_text(encoding="utf-8")) == {
@@ -112,5 +112,6 @@ async def test_write_json_raises_os_error_when_parent_is_a_file(tmp_path):
     blocking_file = tmp_path / "not-a-directory"
     blocking_file.write_text("x", encoding="utf-8")
 
-    with pytest.raises(OSError):
+    # The exact error depends on the operating system.
+    with pytest.raises((FileExistsError, FileNotFoundError, NotADirectoryError)):
         await write_json(blocking_file / "results.json", [])
