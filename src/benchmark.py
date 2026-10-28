@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.client import HTTPException
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from aiohttp import web
@@ -37,6 +37,10 @@ def _fetch_sync(url: str, timeout: float = 10) -> str | None:
     try:
         with _OPENER.open(request, timeout=timeout) as response:
             return response.read().decode("utf-8", errors="replace")
+    except HTTPError as error:
+        # The error holds the open response; close it to avoid a resource leak.
+        error.close()
+        return None
     except (URLError, HTTPException, TimeoutError, OSError, ValueError):
         return None
 
