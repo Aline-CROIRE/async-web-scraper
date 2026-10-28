@@ -151,3 +151,88 @@ def test_retry_rejects_invalid_exceptions(exceptions):
         match="exceptions must contain exception classes",
     ):
         retry(exceptions=exceptions)
+
+
+@pytest.mark.parametrize("max_attempts", [2.5, True, "3"])
+def test_retry_rejects_non_integer_max_attempts(max_attempts):
+    with pytest.raises(TypeError, match="max_attempts must be an integer"):
+        retry(max_attempts=max_attempts)
+
+
+@pytest.mark.parametrize("delay", [True, "1", None])
+def test_retry_rejects_non_numeric_delay(delay):
+    with pytest.raises(TypeError, match="delay must be a number"):
+        retry(delay=delay)
+
+
+@pytest.mark.parametrize("delay", [float("nan"), float("inf")])
+def test_retry_rejects_non_finite_delay(delay):
+    with pytest.raises(ValueError, match="delay must be finite"):
+        retry(delay=delay)
+
+
+@pytest.mark.parametrize("exceptions", [TimeoutError, [TimeoutError]])
+def test_retry_rejects_exceptions_that_are_not_a_tuple(exceptions):
+    with pytest.raises(TypeError, match="exceptions must be a tuple"):
+        retry(exceptions=exceptions)
+
+
+def test_retry_refuses_to_retry_cancellation():
+    with pytest.raises(
+        ValueError,
+        match="exceptions must contain exception classes",
+    ):
+        retry(exceptions=(asyncio.CancelledError,))
+
+
+def test_retry_rejects_non_callable_retry_if():
+    with pytest.raises(TypeError, match="retry_if must be callable"):
+        retry(retry_if="yes")
+
+
+def test_retry_rejects_non_async_function():
+    with pytest.raises(TypeError, match="async function"):
+
+        @retry(delay=0)
+        def fetch_data():
+            return "not awaitable"
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_retry_cancellation_raised_by_function():
+    attempts = 0
+
+    @retry(max_attempts=3, delay=0, exceptions=(Exception,))
+    async def fetch_data():
+        nonlocal attempts
+        attempts += 1
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await fetch_data()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelling_during_retry_delay_stops_further_attempts():
+    attempts = 0
+    first_failure = asyncio.Event()
+
+    @retry(max_attempts=3, delay=10)
+    async def fetch_data():
+        nonlocal attempts
+        attempts += 1
+        first_failure.set()
+        raise TimeoutError("Temporary timeout")
+
+    task = asyncio.create_task(fetch_data())
+    await asyncio.wait_for(first_failure.wait(), timeout=1)
+    await asyncio.sleep(0)  # Let the wrapper start its retry delay.
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert attempts == 1
