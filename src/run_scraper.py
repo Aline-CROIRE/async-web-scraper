@@ -1,6 +1,7 @@
 ﻿import asyncio
 from pathlib import Path
 
+from src.async_generators import PageResult
 from src.json_writer import write_json
 from src.scraper import scrape_urls
 
@@ -11,9 +12,16 @@ URLS = [
 ]
 
 
+def show_progress(result: PageResult) -> None:
+    """Print each page as soon as it has been scraped."""
+    status = "done" if result["success"] else "failed"
+    print(f"  {status}: {result['url']}")
+
+
 async def main() -> None:
     """Run the scraper and save extracted results."""
-    results = await scrape_urls(URLS)
+    print(f"Scraping {len(URLS)} pages (results appear as they finish)...")
+    results = await scrape_urls(URLS, on_result=show_progress)
 
     output_path = Path("output") / "scraped_results.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)

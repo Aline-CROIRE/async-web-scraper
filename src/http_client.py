@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
+from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -200,15 +202,28 @@ async def fetch_url_safely(
     )
 
 
-async def fetch_urls(
+class FetchResult(NamedTuple):
+    """One fetched page, tagged with its position in the input list."""
+
+    index: int
+    url: str
+    html: str | None
+
+
+async def iter_fetch_results(
     urls: list[str],
     timeout: float = 10,
     retries: int = 3,
     retry_delay: float = 1.0,
     max_concurrency: int = 10,
     min_request_interval: float = 0.0,
-) -> list[str | None]:
-    """Fetch URLs with bounded workers, preserving input order."""
+) -> AsyncGenerator[FetchResult, None]:
+    """Fetch URLs with bounded workers, yielding each result as it completes.
+
+    Results arrive in completion order, not input order; use ``index`` to
+    restore the original order. All workers share one session and are
+    cancelled if the consumer stops early or a worker fails unexpectedly.
+    """
     _validate_request_options(timeout, retries, retry_delay)
     if isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int):
         raise TypeError("max_concurrency must be an integer")
@@ -217,9 +232,9 @@ async def fetch_urls(
 
     request_attempt = rate_limit(min_request_interval)(_fetch_url_once)
     if not urls:
-        return []
+        return
 
-    results: list[str | None] = [None] * len(urls)
+    completed: asyncio.Queue[FetchResult | Exception] = asyncio.Queue()
     url_iterator = iter(enumerate(urls))
     worker_count = min(max_concurrency, len(urls))
 
@@ -229,16 +244,21 @@ async def fetch_urls(
     ) as session:
 
         async def worker() -> None:
-            while item := next(url_iterator, None):
-                index, url = item
-                results[index] = await _fetch_safely(
-                    url,
-                    timeout,
-                    retries,
-                    retry_delay,
-                    session,
-                    request_attempt,
-                )
+            try:
+                while item := next(url_iterator, None):
+                    index, url = item
+                    html = await _fetch_safely(
+                        url,
+                        timeout,
+                        retries,
+                        retry_delay,
+                        session,
+                        request_attempt,
+                    )
+                    completed.put_nowait(FetchResult(index, url, html))
+            except Exception as error:  # noqa: BLE001 - re-raised by the consumer
+                # Hand unexpected errors to the consumer so it cannot wait forever.
+                completed.put_nowait(error)
 
         tasks = [
             asyncio.create_task(worker(), name=f"fetch-worker-{index}")
@@ -246,13 +266,42 @@ async def fetch_urls(
         ]
 
         try:
-            await asyncio.gather(*tasks)
-        except BaseException:
+            for _ in urls:
+                item = await completed.get()
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            # Runs on normal completion, early exit, errors and cancellation.
             for task in tasks:
                 if not task.done():
                     task.cancel()
 
             await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+
+
+async def fetch_urls(
+    urls: list[str],
+    timeout: float = 10,
+    retries: int = 3,
+    retry_delay: float = 1.0,
+    max_concurrency: int = 10,
+    min_request_interval: float = 0.0,
+) -> list[str | None]:
+    """Fetch URLs with bounded workers, preserving input order."""
+    results: list[str | None] = [None] * len(urls)
+
+    async with aclosing(
+        iter_fetch_results(
+            urls,
+            timeout=timeout,
+            retries=retries,
+            retry_delay=retry_delay,
+            max_concurrency=max_concurrency,
+            min_request_interval=min_request_interval,
+        )
+    ) as fetched:
+        async for result in fetched:
+            results[result.index] = result.html
 
     return results
