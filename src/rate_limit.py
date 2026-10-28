@@ -1,12 +1,23 @@
 import asyncio
+import inspect
 import math
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from functools import wraps
 from typing import ParamSpec, TypeVar
+from weakref import WeakKeyDictionary
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+@dataclass
+class _LoopState:
+    """Pacing state for one event loop; an asyncio.Lock cannot cross loops."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_call_time: float | None = None
 
 
 def rate_limit(
@@ -22,6 +33,9 @@ def rate_limit(
     def decorator(
         function: Callable[P, Awaitable[R]],
     ) -> Callable[P, Awaitable[R]]:
+        if not inspect.iscoroutinefunction(function):
+            raise TypeError("rate_limit can only decorate an async function")
+
         if min_interval == 0:
 
             @wraps(function)
@@ -30,24 +44,29 @@ def rate_limit(
 
             return unthrottled_wrapper
 
-        lock = asyncio.Lock()
-        last_call_time: float | None = None
+        # Weak keys let finished event loops be garbage collected.
+        states: WeakKeyDictionary[asyncio.AbstractEventLoop, _LoopState] = (
+            WeakKeyDictionary()
+        )
 
         @wraps(function)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            nonlocal last_call_time
+            loop = asyncio.get_running_loop()
+            state = states.get(loop)
+            if state is None:
+                state = states[loop] = _LoopState()
 
-            async with lock:
+            async with state.lock:
                 now = time.monotonic()
 
-                if last_call_time is not None:
-                    elapsed = now - last_call_time
+                if state.last_call_time is not None:
+                    elapsed = now - state.last_call_time
                     remaining = min_interval - elapsed
 
                     if remaining > 0:
                         await asyncio.sleep(remaining)
 
-                last_call_time = time.monotonic()
+                state.last_call_time = time.monotonic()
 
             return await function(*args, **kwargs)
 
