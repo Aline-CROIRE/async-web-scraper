@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import ssl
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from typing import NamedTuple
@@ -50,7 +51,8 @@ def _should_retry(error: Exception) -> bool:
     if isinstance(error, aiohttp.ClientResponseError):
         return _is_retryable_http_error(error)
 
-    return True
+    # An untrusted certificate will not become valid on the next attempt.
+    return not isinstance(error, ssl.SSLCertVerificationError)
 
 
 def _safe_url_for_logging(url: str) -> str:
