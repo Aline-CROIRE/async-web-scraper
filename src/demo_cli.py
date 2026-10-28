@@ -99,7 +99,6 @@ def display_results(results: list[dict]) -> None:
 
     print("\n" + "=" * 42)
     print(f"Completed: {successful}/{len(results)} websites successful")
-    print(f"JSON saved to: {OUTPUT_PATH}")
 
 
 def show_progress(result: PageResult) -> None:
@@ -127,9 +126,15 @@ async def scrape_interactively() -> None:
         on_result=show_progress,
     )
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    await write_json(OUTPUT_PATH, results)
     display_results(results)
+
+    try:
+        saved_path = await write_json(OUTPUT_PATH, results)
+    except OSError as error:
+        print(f"Could not save results to {OUTPUT_PATH}: {error}")
+        return
+
+    print(f"JSON saved to: {saved_path}")
 
 
 def view_saved_results() -> None:

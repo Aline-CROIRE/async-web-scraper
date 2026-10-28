@@ -1,4 +1,5 @@
 ﻿import asyncio
+import sys
 from pathlib import Path
 
 from src.benchmark import benchmark_fetching
@@ -10,9 +11,11 @@ URLS = [
     "https://www.python.org/",
 ]
 
+OUTPUT_PATH = Path("output") / "benchmark_results.json"
 
-async def main() -> None:
-    """Run the benchmark and save its results."""
+
+async def main() -> int:
+    """Run the benchmark, show and save its results; return an exit code."""
     results = await benchmark_fetching(URLS)
 
     print("\nBenchmark results")
@@ -25,12 +28,15 @@ async def main() -> None:
             f"successful={metrics['successful_requests']}/{len(URLS)}"
         )
 
-    output_path = Path("output") / "benchmark_results.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    await write_json(output_path, results)
+    try:
+        saved_path = await write_json(OUTPUT_PATH, results)
+    except OSError as error:
+        print(f"\nCould not save results to {OUTPUT_PATH}: {error}", file=sys.stderr)
+        return 1
 
-    print(f"\nResults saved to: {output_path}")
+    print(f"\nResults saved to: {saved_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
